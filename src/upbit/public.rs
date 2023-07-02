@@ -1,4 +1,5 @@
 use polars::prelude::*;
+use polars::series::ops::NullBehavior;
 use polars_io::prelude::*;
 use serde_json::error::Category::Data;
 use crate::upbit::{UPBitSocket, UPBitError, CallMethod, request_get, request_post, generate_request_body, response_to_json};
@@ -67,7 +68,7 @@ impl UPBitSocket {
                     basic_json.push_str("\n");
                 }
                 basic_json.pop();
-                println!("{}", basic_json);
+
                 let file = std::io::Cursor::new(basic_json);
                 let df = JsonReader::new(file)
                     .with_json_format(JsonFormat::JsonLines)
@@ -88,5 +89,54 @@ impl UPBitSocket {
             }
             Err(e) => Err(e)
         }
+    }
+
+    pub async fn check_market_trend_percent(&self) -> Result<f64, UPBitError> {
+
+        let btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
+            Ok(df) => df.lazy().select([
+                col("trade_price")
+            ]).collect().unwrap(),
+            Err(e) => return Err(e)
+        };
+        println!("{}", btc_df);
+
+        let eth_df = match self.get_recent_market_data("KRW-ETH", 200).await {
+            Ok(df) => df.lazy().select([
+                col("trade_price")
+            ]).collect().unwrap(),
+            Err(e) => return Err(e)
+        };
+        println!("{}", eth_df);
+
+        let btc_trend = btc_df.clone().lazy().select([
+                col("trade_price")
+                    .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                    .alias("ewm_mean")
+            ]).collect().unwrap();
+
+        let eth_trend = eth_df.clone().lazy().select([
+            col("trade_price")
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("ewm_mean")
+        ]).collect().unwrap();
+
+        let btc_ewm = match btc_trend.column("ewm_mean").unwrap().get(btc_trend.column("ewm_mean").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(float) => float,
+            _ => 0.0
+        };
+        let btc_last = match btc_df.column("trade_price").unwrap().get(btc_df.column("trade_price").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(float) => float,
+            _ => 0.0
+        };
+        let eth_ewm = match eth_trend.column("ewm_mean").unwrap().get(eth_trend.column("ewm_mean").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(float) => float,
+            _ => 0.0
+        };
+        let eth_last = match eth_df.column("trade_price").unwrap().get(eth_df.column("trade_price").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(float) => float,
+            _ => 0.0
+        };
+        return Ok( 100.0*( 2.0*((btc_last-btc_ewm)/btc_ewm) + ((eth_last-eth_ewm)/eth_ewm) )/3.0);
     }
 }
