@@ -91,6 +91,36 @@ impl UPBitSocket {
         }
     }
 
+    pub async fn get_rsi(&self, ticker: &str) -> Result<DataFrame, UPBitError> {
+        let df = match self.get_recent_market_data(ticker, 200).await {
+            Ok(df) => df,
+            Err(e) => return Err(e),
+        };
+        let diff = df.lazy().select([
+            col("timestamp"),
+            col("trade_price").diff(1, NullBehavior::Ignore).alias("diff"),
+        ]).collect().unwrap();
+
+        let au_ad = diff.clone().lazy().select([
+            when(col("diff").lt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("diff"))
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("au"),
+            when(col("diff").gt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("diff"))
+                .abs()
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("ad"),
+        ]).collect().unwrap();
+
+        return Ok(au_ad.lazy().select([
+            (lit(100.0) - (lit(100.0) / (lit(1.0)+(col("au")/col("ad")) )))
+                .alias("rsi")
+        ]).collect().unwrap());
+    }
+
     pub async fn check_market_trend_percent(&self) -> Result<f64, UPBitError> {
 
         let btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
