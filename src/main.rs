@@ -44,8 +44,17 @@ mod upbit;
 
 #[tokio::main]
 async fn main() {
-    let upbit = upbit::UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
-    match upbit.get_tickers_sortby_volume().await {
+    let upbit_floweryclover = upbit::restful::UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
+    match upbit_floweryclover.get_all_balances().await {
+        Ok(values) => {
+            for (c, b) in values {
+                println!("{}: {}",c,b);
+            }
+        }
+        Err(e) => eprintln!("{}", e)
+    }
+    let mut upbit_socket = upbit::UPBitSocket::new();
+    match upbit_socket.get_tickers_sortby_volume().await {
         Ok(values) => {
             for (c, b) in values {
                 println!("{}: {}",c,b);
@@ -54,10 +63,10 @@ async fn main() {
         Err(e) => eprintln!("{}", e)
     }
 
-    let mut upbit_websocket = upbit::websocket::UPBitWebSocket::new(&upbit).await;
+    upbit_socket.start_realtime_data().await;
 
     loop {
-        upbit_websocket.get_realtime_data();
+        upbit_socket.get_realtime_data().unwrap();
     }
 
 }
