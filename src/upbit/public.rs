@@ -44,19 +44,7 @@ impl UPBitSocket {
             Err(e) => Err(e)
         }
     }
-
-    // {
-    // "candle_acc_trade_price":106292470.96922,
-    // "candle_acc_trade_volume":2.61664687,
-    // "candle_date_time_kst":"2023-07-02T23:15:00",
-    // "candle_date_time_utc":"2023-07-02T14:15:00",
-    // "high_price":40630000.0,
-    // "low_price":40588000.0,"market":"KRW-BTC",
-    // "opening_price":40625000.0,
-    // "timestamp":1688307403765,
-    // "trade_price":40625000.0,
-    // "unit":5
-    // }
+    
     pub async fn get_recent_market_data(&self, ticker: &str, count: u8) -> Result<DataFrame, UPBitError> {
         let url = format!("https://api.upbit.com/v1/candles/minutes/5?market={}&count={}", ticker, count);
         match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
@@ -91,82 +79,88 @@ impl UPBitSocket {
         }
     }
 
-    pub async fn get_rsi(&self, ticker: &str) -> Result<DataFrame, UPBitError> {
-        let df = match self.get_recent_market_data(ticker, 200).await {
-            Ok(df) => df,
-            Err(e) => return Err(e),
-        };
-        let diff = df.lazy().select([
-            col("timestamp"),
-            col("trade_price").diff(1, NullBehavior::Ignore).alias("diff"),
-        ]).collect().unwrap();
-
-        let au_ad = diff.clone().lazy().select([
-            when(col("diff").lt(lit(0)))
-                .then(lit(0))
-                .otherwise(col("diff"))
-                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
-                .alias("au"),
-            when(col("diff").gt(lit(0)))
-                .then(lit(0))
-                .otherwise(col("diff"))
-                .abs()
-                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
-                .alias("ad"),
-        ]).collect().unwrap();
-
-        return Ok(au_ad.lazy().select([
-            (lit(100.0) - (lit(100.0) / (lit(1.0)+(col("au")/col("ad")) )))
-                .alias("rsi")
-        ]).collect().unwrap());
-    }
-
-    pub async fn check_market_trend_percent(&self) -> Result<f64, UPBitError> {
-
-        let btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
-            Ok(df) => df.lazy().select([
-                col("trade_price")
-            ]).collect().unwrap(),
+    // bei: BTC와 ETH로 측정한 시장 가격의 저점/고점 상황 (배율: x100) - 낮을수록 구매 강도 상승.
+    // delta: 변화량. 음수에서 양수로 변환되는 시점이 구매 강도 상승.
+    // rsi: BERSI
+    pub async fn btc_eth_indicator(&self) -> Result<(f64, f64, f64), UPBitError> {
+        let mut btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
+            Ok(df) => {
+                df.lazy().select([
+                    col("trade_price").alias("btc_price"),
+                ])
+                    .collect().unwrap()
+                    .with_row_count("no", None).unwrap()
+            }
             Err(e) => return Err(e)
         };
-        println!("{}", btc_df);
 
         let eth_df = match self.get_recent_market_data("KRW-ETH", 200).await {
-            Ok(df) => df.lazy().select([
-                col("trade_price")
-            ]).collect().unwrap(),
+            Ok(df) => {
+                df.lazy().select([
+                    col("trade_price").alias("eth_price")
+                ])
+                    .collect().unwrap()
+                    .with_row_count("no", None).unwrap()
+            }
             Err(e) => return Err(e)
         };
-        println!("{}", eth_df);
 
-        let btc_trend = btc_df.clone().lazy().select([
-                col("trade_price")
-                    .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
-                    .alias("ewm_mean")
-            ]).collect().unwrap();
-
-        let eth_trend = eth_df.clone().lazy().select([
-            col("trade_price")
+        let indicator_df = btc_df.join(&eth_df, ["no"], ["no"], JoinType::Inner, None).unwrap()
+            .lazy().select([
+            col("btc_price"),
+            col("btc_price").ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14)).alias("btc_ewm"),
+            col("btc_price").diff(1, NullBehavior::Ignore).alias("btc_diff"),
+            col("eth_price"),
+            col("eth_price").ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14)).alias("eth_ewm"),
+            col("eth_price").diff(1, NullBehavior::Ignore).alias("eth_diff"),
+        ])
+            .collect().unwrap()
+            .lazy().select([
+            ((lit(2.0)*(col("btc_price")-col("btc_ewm"))/col("btc_ewm") + lit(1.0)*(col("eth_price")-col("eth_price"))/col("eth_ewm")) /lit(3.0)).alias("bei"),
+            when(col("btc_diff").lt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("btc_diff"))
                 .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
-                .alias("ewm_mean")
-        ]).collect().unwrap();
+                .alias("btc_au"),
+            when(col("btc_diff").gt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("btc_diff"))
+                .abs()
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("btc_ad"),
+            when(col("eth_diff").lt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("eth_diff"))
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("eth_au"),
+            when(col("eth_diff").gt(lit(0)))
+                .then(lit(0))
+                .otherwise(col("eth_diff"))
+                .abs()
+                .ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14))
+                .alias("eth_ad"),
+        ])
+            .collect().unwrap()
+            .lazy().select([
+            (col("bei")*lit(100.0)).round(3),
+            (col("bei").diff(1, NullBehavior::Ignore)*lit(100.0)).round(3).alias("delta"),
+            (((lit(2.0)*(lit(100.0) - (lit(100.0) / (lit(1.0)+(col("btc_au")/col("btc_ad")) )))) + (lit(1.0)*(lit(100.0) - (lit(100.0) / (lit(1.0)+(col("eth_au")/col("eth_ad")) )))))/lit(3.0)).alias("bersi")
+        ])
+            .collect().unwrap()
+            .drop_nulls::<String>(None).unwrap();
 
-        let btc_ewm = match btc_trend.column("ewm_mean").unwrap().get(btc_trend.column("ewm_mean").unwrap().len()-1).unwrap() {
-            AnyValue::Float64(float) => float,
-            _ => 0.0
+        let bei = match indicator_df.column("bei").unwrap().get(indicator_df.column("bei").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(f) => f,
+            _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
-        let btc_last = match btc_df.column("trade_price").unwrap().get(btc_df.column("trade_price").unwrap().len()-1).unwrap() {
-            AnyValue::Float64(float) => float,
-            _ => 0.0
+        let delta = match indicator_df.column("delta").unwrap().get(indicator_df.column("delta").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(f) => f,
+            _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
-        let eth_ewm = match eth_trend.column("ewm_mean").unwrap().get(eth_trend.column("ewm_mean").unwrap().len()-1).unwrap() {
-            AnyValue::Float64(float) => float,
-            _ => 0.0
+        let bersi = match indicator_df.column("bersi").unwrap().get(indicator_df.column("bersi").unwrap().len()-1).unwrap() {
+            AnyValue::Float64(f) => f,
+            _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
-        let eth_last = match eth_df.column("trade_price").unwrap().get(eth_df.column("trade_price").unwrap().len()-1).unwrap() {
-            AnyValue::Float64(float) => float,
-            _ => 0.0
-        };
-        return Ok( 100.0*( 2.0*((btc_last-btc_ewm)/btc_ewm) + ((eth_last-eth_ewm)/eth_ewm) )/3.0);
+        return Ok((bei, delta, bersi));
     }
 }
