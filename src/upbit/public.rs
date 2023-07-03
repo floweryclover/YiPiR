@@ -5,7 +5,7 @@ use serde_json::error::Category::Data;
 use crate::upbit::{UPBitSocket, UPBitError, CallMethod, request_get, request_post, generate_request_body, response_to_json};
 
 impl UPBitSocket {
-    pub async fn get_tickers_sortby_volume(&self) -> Result<Vec<(String, f64)>, UPBitError> {
+    pub async fn get_tickers_sortby_volume(&self) -> Result<Vec<String>, UPBitError> {
         let tickers = match self.get_all_available_tickers().await {
             Ok(values) => values,
             Err(e) => return Err(e)
@@ -20,11 +20,15 @@ impl UPBitSocket {
 
         match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
             Ok(json_array) => {
-                let mut return_vec = Vec::new();
+                let mut vec = Vec::new();
                 for item in json_array {
-                    return_vec.push((String::from(item["market"].as_str().unwrap()), item["trade_price"].as_f64().unwrap() * item["acc_trade_volume_24h"].as_f64().unwrap()));
+                    vec.push((String::from(item["market"].as_str().unwrap()), item["trade_price"].as_f64().unwrap() * item["acc_trade_volume_24h"].as_f64().unwrap()));
                 }
-                return_vec.sort_by(|(_, va), (_, vb)| vb.partial_cmp(va).unwrap());
+                vec.sort_by(|(_, va), (_, vb)| vb.partial_cmp(va).unwrap());
+                let mut return_vec = Vec::new();
+                for (ticker, _) in vec {
+                    return_vec.push(ticker);
+                }
                 return Ok(return_vec);
             }
             Err(e) => Err(e)

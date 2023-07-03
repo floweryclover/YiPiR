@@ -55,7 +55,7 @@ impl UPBitSocket {
 
                 let mut tickers_map = std::collections::HashMap::new();
                 // 현재 저점인 종목만 추리기
-                for (ticker, _) in heavy_tickers {
+                for ticker in heavy_tickers {
                    let df = match self.get_recent_market_data(ticker.as_str(), 200).await {
                        Ok(df) => df,
                        Err(_) => return Err(UPBitError::FailedToReceiveDataError(String::from("추천 종목을 파악하기 위해 UPBit API 요청을 보냈으나 응답을 받지 못했습니다."))),
