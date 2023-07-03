@@ -2,6 +2,7 @@ use actix_web::web;
 use polars::frame::DataFrame;
 use serde_json::json;
 use crate::upbit::responses::{UPBitResponse};
+use std::sync::{Arc, Mutex};
 
 pub mod responses;
 pub mod realtime;
@@ -17,7 +18,7 @@ enum CallMethod<'a> {
 pub struct UPBitSocket {
     recommended_coins: std::collections::HashMap<String, coin::Coin>,
     reqwest_client: reqwest::Client,
-    realtime_price: std::collections::HashMap<String, f64>,
+    realtime_price: Arc<Mutex<std::collections::HashMap<String, f64>>>,
     previous_bei_delta: f64,
 }
 
@@ -28,7 +29,7 @@ impl UPBitSocket {
         UPBitSocket {
             recommended_coins: std::collections::HashMap::new(),
             reqwest_client: reqwest::Client::new(),
-            realtime_price: std::collections::HashMap::new(),
+            realtime_price: Arc::new(Mutex::new(std::collections::HashMap::new())),
             previous_bei_delta: -1.0,
         }
     }
