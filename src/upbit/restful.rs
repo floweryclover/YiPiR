@@ -1,9 +1,11 @@
 use crate::upbit::{UPBitError, request_post, request_get, generate_request_body, response_to_json, CallMethod};
+use crate::upbit::coin::Coin;
 
 pub struct UPBitAccount {
     access_key: String,
     secret_key: String,
     reqwest_client: reqwest::Client,
+    my_coins: std::collections::HashMap<String, Coin>,
 }
 
 impl UPBitAccount {
@@ -12,6 +14,7 @@ impl UPBitAccount {
             access_key: String::from(access_key),
             secret_key: String::from(secret_key),
             reqwest_client: reqwest::Client::new(),
+            my_coins: std::collections::HashMap::new(),
         }
     }
 

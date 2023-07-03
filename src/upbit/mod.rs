@@ -7,6 +7,7 @@ pub mod responses;
 pub mod realtime;
 pub mod restful;
 pub mod public;
+pub mod coin;
 
 enum CallMethod<'a> {
     Public,
@@ -14,35 +15,21 @@ enum CallMethod<'a> {
 }
 
 pub struct UPBitSocket {
+    recommended_coins: std::collections::HashMap<String, coin::Coin>,
     reqwest_client: reqwest::Client,
-    snapshot_client: websocket::client::sync::Client<Box<dyn websocket::stream::sync::NetworkStream + Send>>,
-    realtime_client: websocket::client::sync::Client<Box<dyn websocket::stream::sync::NetworkStream + Send>>,
-    realtime_running: bool,
+    realtime_price: std::collections::HashMap<String, f64>,
+    previous_bei_delta: f64,
 }
 
 impl UPBitSocket {
     pub fn new() -> Self {
-        use websocket::{ClientBuilder, OwnedMessage, Message};
         use crate::upbit::{UPBitSocket};
 
-        let snapshot_client = ClientBuilder::new("wss://api.upbit.com/websocket/v1")
-            .unwrap()
-            .add_protocol("ping")
-            .connect(None)
-            .unwrap();
-
-
-        let realtime_client = ClientBuilder::new("wss://api.upbit.com/websocket/v1")
-            .unwrap()
-            .add_protocol("ping")
-            .connect(None)
-            .unwrap();
-
         UPBitSocket {
+            recommended_coins: std::collections::HashMap::new(),
             reqwest_client: reqwest::Client::new(),
-            snapshot_client,
-            realtime_client,
-            realtime_running: false,
+            realtime_price: std::collections::HashMap::new(),
+            previous_bei_delta: -1.0,
         }
     }
 }
