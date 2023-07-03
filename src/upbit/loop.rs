@@ -1,6 +1,10 @@
 use crate::upbit::{UPBitError, UPBitSocket};
 
 impl UPBitSocket {
+    //TODO: 5분마다 추천 종목의 정보를 업데이트하는 대신, 아예 5분마다 그냥 추천 종목 자체를 새로 갱신한다면? -> API 호출량이 증가한다는 문제가 있으나 LOOP를 하나만 작성 가능
+    // pub async fn ......
+    //pub fn run_buy_loop()
+
     pub fn run_realtime_price_loop(&self, tickers: &Vec<String>) {
         use tungstenite::{connect, Message};
         let (mut stream, response) = connect("wss://api.upbit.com/websocket/v1").unwrap();
