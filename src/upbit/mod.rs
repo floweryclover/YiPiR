@@ -5,7 +5,6 @@ use crate::upbit::responses::{UPBitResponse};
 use std::sync::{Arc, Mutex};
 
 pub mod responses;
-pub mod realtime;
 pub mod restful;
 pub mod public;
 pub mod coin;
@@ -32,6 +31,64 @@ impl UPBitSocket {
             realtime_price: Arc::new(Mutex::new(std::collections::HashMap::new())),
             previous_bei_delta: -1.0,
         }
+    }
+    // YiPiR 핵심 루프
+    pub async fn run_main_service(&self) -> tokio::task::JoinHandle<()> {
+        use std::time::Duration;
+        use tokio::{task, time};
+        use tungstenite::{connect, Message};
+
+        // 웹소켓 수신
+        let (mut stream, response) = connect("wss://api.upbit.com/websocket/v1").unwrap();
+
+        let uuid = uuid::Uuid::new_v4().to_string();
+        let mut jsoned_tickers = Vec::new();
+        let tickers = self.get_tickers_sortby_volume().await.unwrap();
+        for ticker in tickers {
+            jsoned_tickers.push(serde_json::json!(ticker));
+        }
+
+        let send_json = serde_json::json!([
+            {"ticket": uuid},
+            {
+                "type": "ticker",
+                "codes": serde_json::Value::Array(jsoned_tickers),
+                "isOnlyRealtime": true
+            },
+            {"format": "DEFAULT"}
+        ]).to_string();
+
+        stream.write_message(Message::Text(send_json)).unwrap();
+
+        let arc_cloned = self.realtime_price.clone();
+        // 웹소켓 루프
+        task::spawn_blocking(move || {
+            loop {
+                if let Message::Binary(ref binary) = stream.read_message().unwrap() {
+                    let json: serde_json::Value = serde_json::from_slice(binary).unwrap();
+                    {
+                        let mut mutex = arc_cloned.lock().unwrap();
+                        match (*mutex).get_mut(json["code"].as_str().unwrap()) {
+                            Some(a) => *a = json["trade_price"].as_f64().unwrap(),
+                            None => {
+                                (*mutex).insert(String::from(json["code"].as_str().unwrap()), json["trade_price"].as_f64().unwrap());
+                            }
+                        }
+                        println!("{}", json["code"].as_str().unwrap());
+                    }
+                }
+            }
+        });
+
+        // 메인 루프
+        task::spawn(async {
+            let mut count: u8 = 1;
+            let mut interval = time::interval(Duration::from_secs(1));
+
+            loop {
+                interval.tick().await;
+            }
+        })
     }
 }
 
