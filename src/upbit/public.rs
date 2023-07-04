@@ -1,8 +1,5 @@
-use std::ops::Add;
-use polars::prelude::*;
 use polars::series::ops::NullBehavior;
-use polars_io::prelude::*;
-use serde_json::error::Category::Data;
+use polars::prelude::*;
 use crate::upbit::{UPBitSocket, UPBitError, CallMethod, request_get, request_post, generate_request_body, response_to_json};
 
 impl UPBitSocket {
@@ -80,23 +77,9 @@ impl UPBitSocket {
                     }
                     basic_json.pop();
 
-                    let schema = Schema::from_iter(vec![
-                        Field::new("candle_acc_trade_price", DataType::Float64),
-                        Field::new("candle_acc_trade_volume", DataType::Float64),
-                        Field::new("candle_date_time_kst", DataType::Utf8),
-                        Field::new("candle_date_time_utc", DataType::Utf8),
-                        Field::new("high_price", DataType::Float64),
-                        Field::new("low_price", DataType::Float64),
-                        Field::new("market", DataType::Utf8),
-                        Field::new("opening_price", DataType::Float64),
-                        Field::new("timestamp", DataType::Int64),
-                        Field::new("trade_price", DataType::Float64),
-                        Field::new("unit", DataType::Int64),
-                    ]);
                     let file = std::io::Cursor::new(basic_json);
                     let df = JsonReader::new(file)
                         .with_json_format(JsonFormat::JsonLines)
-                        //.with_schema(&schema)
                         .finish()
                         .unwrap()
                         .select([
@@ -149,7 +132,7 @@ impl UPBitSocket {
     // rsi: BERSI
     // previous = 0 현재, ex) previous = 1: 1x5분전 기준
     pub async fn btc_eth_indicator(&self, previous: u8) -> Result<(f64, f64, f64), UPBitError> {
-        let mut btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
+        let btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
             Ok(df) => {
                 df.lazy().select([
                     col("trade_price").alias("btc_price"),

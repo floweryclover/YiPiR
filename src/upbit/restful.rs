@@ -1,11 +1,11 @@
-use crate::upbit::{UPBitError, request_post, request_get, generate_request_body, response_to_json, CallMethod, UPBitSocket};
+use crate::upbit::{UPBitError, request_post, request_get, CallMethod, UPBitSocket};
 use crate::upbit::coin::Coin;
 
 pub struct UPBitAccount {
     access_key: String,
     secret_key: String,
     reqwest_client: reqwest::Client,
-    my_coins: std::collections::HashMap<String, Coin>,
+    coins: std::collections::HashMap<String, Coin>,
 }
 
 impl UPBitAccount {
@@ -14,9 +14,29 @@ impl UPBitAccount {
             access_key: String::from(access_key),
             secret_key: String::from(secret_key),
             reqwest_client: reqwest::Client::new(),
-            my_coins: std::collections::HashMap::new(),
+            coins: std::collections::HashMap::new(),
         }
     }
+
+    pub async fn refresh_my_coins(&mut self, public_upbit: &UPBitSocket) {
+        // coins 필드 초기화
+        self.coins.clear();
+        // KRW가 들어간 모든 보유 티커 가져오기
+        let all_balances = self.get_all_balances().await.unwrap();
+
+        // KRW을 제외한 티커들을 가지고 coins 필드를 업데이트 함
+        for ticker in all_balances.keys() {
+            if ticker == "KRW" {
+                continue;
+            }
+            let mut coin = Coin::new(ticker);
+            let df = public_upbit.get_recent_market_data(ticker, 200).await.unwrap();
+            coin.init_data(df);
+
+            self.coins.insert(String::from(ticker), coin);
+        }
+    }
+
     pub async fn get_all_balances(&self) -> Result<std::collections::HashMap<String, f64>, UPBitError> {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
@@ -222,17 +242,21 @@ impl UPBitAccount {
 
     // 해당 종목을 전체 판매
     async fn sell(&self, ticker: &str) {
-        self.sell_market_order_by_percent(ticker, 100.0).await.unwrap();
+        match self.sell_market_order_by_percent(ticker, 100.0).await {
+            Ok(_) => (),
+            Err(UPBitError::FailedToTradeError(detail)) => eprintln!("{}", detail),
+            Err(e) => panic!("{}", e)
+        }
     }
 
     // 현재 보유하고 있는 종목을 판매해야 할 지 판단
-    pub async fn sell_decision(&self, public_upbit: &UPBitSocket,) {
-        for (ticker, coin) in &self.my_coins {
+    pub async fn sell_decision(&self, public_upbit: &UPBitSocket) {
+        for (ticker, coin) in &self.coins {
             // RSI가 너무 높으면 판매
             let rsi_limit = 60.0;
             let current_rsi = coin.get_rsi(&public_upbit.realtime_price, 0).await.unwrap();
             if current_rsi > rsi_limit {
-                self.sell(ticker);
+                self.sell(ticker).await;
             }
         }
     }

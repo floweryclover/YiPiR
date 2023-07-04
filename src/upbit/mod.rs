@@ -36,8 +36,9 @@ impl UPBitService {
         task::spawn(async move {
             // use polars::prelude::*;
             use crate::upbit::restful::UPBitAccount;
-            let upbit_floweryclover = UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
+
             let mut upbit_socket = UPBitSocket::new();
+            let mut upbit_floweryclover = UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
             // 웹소켓 수신
             let (mut stream, response) = connect("wss://api.upbit.com/websocket/v1").unwrap();
 
@@ -78,6 +79,9 @@ impl UPBitService {
             let mut interval = time::interval(Duration::from_secs(1));
             let (mut bei, mut delta, mut bersi) = (1.0, 1.0, 50.0);
             loop {
+                if count % 60 == 0 {
+                    upbit_floweryclover.refresh_my_coins(&upbit_socket).await;
+                }
 
                 if count == 300 {
                     (bei, delta, bersi) = upbit_socket.refresh_recommended_coins().await.unwrap();

@@ -88,7 +88,7 @@ impl UPBitSocket {
                     // }
                     println!("{}", ticker);
                     let mut coin = Coin::new(ticker.as_str());
-                    coin.init_data(&df);
+                    coin.init_data(df);
                     tickers_map.insert(ticker, coin);
                     count += 1;
                 }
@@ -114,9 +114,8 @@ impl Coin {
         }
     }
 
-    pub fn init_data(&mut self, dataframe: &DataFrame) {
+    pub fn init_data(&mut self, dataframe: DataFrame) {
         self.dataframe = dataframe
-            .clone()
             .lazy()
             .select([
                 col("timestamp"),
