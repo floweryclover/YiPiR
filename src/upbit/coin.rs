@@ -87,6 +87,7 @@ impl UPBitSocket {
                 }
             }
         }
+        println!("{:?}", self.recommended_coins.keys());
         Ok((bei, bei_delta, bersi))
     }
 
