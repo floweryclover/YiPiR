@@ -1,10 +1,8 @@
 use actix_web::web;
 use polars::frame::DataFrame;
 use serde_json::json;
-use crate::upbit::responses::{UPBitResponse};
 use std::sync::{Arc, Mutex};
 
-pub mod responses;
 pub mod restful;
 pub mod public;
 pub mod coin;
@@ -32,14 +30,9 @@ impl UPBitService {
         use tokio::{task, time};
         use tokio::time::Duration;
         use tungstenite::{connect, Message};
-        use std::sync::{Arc, Mutex};
-        use crate::upbit;
 
         // 메인 루프
         task::spawn(async move {
-            let mut count: u16 = 1;
-            let mut interval = time::interval(Duration::from_secs(1));
-
             // use polars::prelude::*;
             // let upbit_floweryclover = upbit::restful::UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
             let mut upbit_socket = UPBitSocket::new();
@@ -79,11 +72,18 @@ impl UPBitService {
                 }
             });
 
-
+            let mut count: u16 = 1;
+            let mut interval = time::interval(Duration::from_secs(1));
             loop {
-                if count == 3 {
+                if count == 10 {
                     let (bei, delta, bersi) = upbit_socket.refresh_recommended_coins().await.unwrap();
                     println!("{} {} {}", bei, delta, bersi);
+                    count = 1;
+                }
+                if !upbit_socket.recommended_coins.is_empty() {
+                    for (ticker, coin) in &mut upbit_socket.recommended_coins {
+                        coin.buy_decision();
+                    }
                 }
                 interval.tick().await;
                 count += 1;
@@ -100,7 +100,7 @@ impl UPBitSocket {
             recommended_coins: std::collections::HashMap::new(),
             reqwest_client: reqwest::Client::new(),
             realtime_price: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            previous_bei_delta: -1.0,
+            previous_bei_delta: 0.0,
         }
     }
 }
@@ -113,6 +113,7 @@ pub enum UPBitError {
     InvalidJsonError,
     OtherError(String),
     FailedToTradeError(String),
+    TooManyRequestError,
 }
 
 impl std::fmt::Debug for UPBitError {
@@ -125,6 +126,7 @@ impl std::fmt::Debug for UPBitError {
             UPBitError::InvalidJsonError => write!(f, "응답 데이터를 JSON 형식으로 변환할 수 없습니다."),
             UPBitError::OtherError(detail) => write!(f, "오류가 발생했습니다: {}", detail),
             UPBitError::FailedToTradeError(detail) => write!(f, "거래에 실패했습니다: {}", detail),
+            UPBitError::TooManyRequestError => write!(f, "UPBit API 호출 횟수를 초과했습니다."),
         }
     }
 }
@@ -139,6 +141,7 @@ impl std::fmt::Display for UPBitError {
             UPBitError::InvalidJsonError => write!(f, "응답 데이터를 JSON 형식으로 변환할 수 없습니다."),
             UPBitError::OtherError(detail) => write!(f, "오류가 발생했습니다: {}", detail),
             UPBitError::FailedToTradeError(detail) => write!(f, "거래에 실패했습니다: {}", detail),
+            UPBitError::TooManyRequestError => write!(f, "UPBit API 호출 횟수를 초과했습니다."),
         }
     }
 }
@@ -235,7 +238,9 @@ async fn response_to_json(response: reqwest::Response) -> Result<Vec<serde_json:
     // JSON 형식인지 판별
     let json = match response.json::<serde_json::Value>().await {
         Ok(j) => j,
-        Err(_) => return Err(UPBitError::InvalidJsonError)
+        Err(_) => {
+            return Err(UPBitError::TooManyRequestError);
+        }
     };
 
     // 배열 형태면 그대로 반환, 배열이 아니면 배열로 반환

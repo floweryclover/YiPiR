@@ -6,9 +6,10 @@ use crate::upbit::{UPBitSocket, UPBitError, CallMethod, request_get, request_pos
 
 impl UPBitSocket {
     pub async fn get_tickers_sortby_volume(&self) -> Result<Vec<String>, UPBitError> {
+        // API 호출 한계 도달시 다시 호출
         let tickers = match self.get_all_available_tickers().await {
-            Ok(values) => values,
-            Err(e) => return Err(e)
+            Ok(tckrs) => tckrs,
+            Err(e) => panic!("{}", e)
         };
 
         let mut url = String::from("https://api.upbit.com/v1/ticker?markets=");
@@ -18,75 +19,109 @@ impl UPBitSocket {
         }
         url.pop();
 
-        match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
-            Ok(json_array) => {
-                let mut vec = Vec::new();
-                for item in json_array {
-                    vec.push((String::from(item["market"].as_str().unwrap()), item["trade_price"].as_f64().unwrap() * item["acc_trade_volume_24h"].as_f64().unwrap()));
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
+                Ok(json_array) => {
+                    let mut vec = Vec::new();
+                    for item in json_array {
+                        vec.push((String::from(item["market"].as_str().unwrap()), item["trade_price"].as_f64().unwrap() * item["acc_trade_volume_24h"].as_f64().unwrap()));
+                    }
+                    vec.sort_by(|(_, va), (_, vb)| vb.partial_cmp(va).unwrap());
+                    let mut return_vec = Vec::new();
+                    for (ticker, _) in vec {
+                        return_vec.push(ticker);
+                    }
+                    return Ok(return_vec);
                 }
-                vec.sort_by(|(_, va), (_, vb)| vb.partial_cmp(va).unwrap());
-                let mut return_vec = Vec::new();
-                for (ticker, _) in vec {
-                    return_vec.push(ticker);
-                }
-                return Ok(return_vec);
+                Err(UPBitError::TooManyRequestError) => continue,
+                Err(e) => panic!("{}", e)
             }
-            Err(e) => Err(e)
         }
     }
 
     pub async fn get_all_available_tickers(&self) -> Result<Vec<String>, UPBitError> {
-        match request_get(&self.reqwest_client, "https://api.upbit.com/v1/market/all", CallMethod::Public).await {
-            Ok(json_array) => {
-                let ticker_list: Vec<String> = json_array.iter().filter(|j| j["market"].as_str().unwrap().contains("KRW")).map(|j| String::from(j["market"].as_str().unwrap())).collect();
-                if ticker_list.is_empty() {
-                    return Err(UPBitError::FailedToReceiveDataError(String::from("전체 종목을 불러오지 못했습니다.")));
-                } else {
-                    return Ok(ticker_list);
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            match request_get(&self.reqwest_client, "https://api.upbit.com/v1/market/all", CallMethod::Public).await {
+                Ok(json_array) => {
+                    let mut ticker_list: Vec<String> = Vec::new();//json_array.iter().filter(|j| j["market"].as_str().unwrap().contains("KRW")).map(|j| String::from(j["market"].as_str().unwrap())).collect();
+                    for json in json_array {
+                        if json["market"].as_str().unwrap().contains("KRW") {//&& json["market_warning"].as_str().unwrap() != "CAUTION" {
+                            ticker_list.push(String::from(json["market"].as_str().unwrap()));
+                        }
+                    }
+                    return if ticker_list.is_empty() {
+                        Err(UPBitError::FailedToReceiveDataError(String::from("전체 종목을 불러오지 못했습니다.")))
+                    } else {
+                        Ok(ticker_list)
+                    }
                 }
+                Err(UPBitError::TooManyRequestError) => continue,
+                Err(e) => panic!("{}", e)
             }
-            Err(e) => Err(e)
         }
     }
     
     pub async fn get_recent_market_data(&self, ticker: &str, count: u8) -> Result<DataFrame, UPBitError> {
         let url = format!("https://api.upbit.com/v1/candles/minutes/5?market={}&count={}", ticker, count);
-        match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
-            Ok(json_array) => {
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        loop {
+            interval.tick().await;
+            match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
+                Ok(json_array) => {
+                    let mut basic_json = String::new();
+                    for json in json_array {
+                        basic_json.push_str(json.to_string().as_str());
+                        basic_json.push_str("\n");
+                    }
+                    basic_json.pop();
 
-                let mut basic_json = String::new();
-                for json in json_array {
-                    basic_json.push_str(json.to_string().as_str());
-                    basic_json.push_str("\n");
+                    let schema = Schema::from_iter(vec![
+                        Field::new("candle_acc_trade_price", DataType::Float64),
+                        Field::new("candle_acc_trade_volume", DataType::Float64),
+                        Field::new("candle_date_time_kst", DataType::Utf8),
+                        Field::new("candle_date_time_utc", DataType::Utf8),
+                        Field::new("high_price", DataType::Float64),
+                        Field::new("low_price", DataType::Float64),
+                        Field::new("market", DataType::Utf8),
+                        Field::new("opening_price", DataType::Float64),
+                        Field::new("timestamp", DataType::Int64),
+                        Field::new("trade_price", DataType::Float64),
+                        Field::new("unit", DataType::Int64),
+                    ]);
+                    let file = std::io::Cursor::new(basic_json);
+                    let df = JsonReader::new(file)
+                        .with_json_format(JsonFormat::JsonLines)
+                        //.with_schema(&schema)
+                        .finish()
+                        .unwrap()
+                        .select([
+                            "timestamp",
+                            "candle_date_time_kst",
+                            "high_price",
+                            "low_price",
+                            "opening_price",
+                            "trade_price",
+                        ])
+                        .unwrap()
+                        .sort(["timestamp"], false)
+                        .unwrap();
+                    return Ok(df);
                 }
-                basic_json.pop();
-
-                let file = std::io::Cursor::new(basic_json);
-                let df = JsonReader::new(file)
-                    .with_json_format(JsonFormat::JsonLines)
-                    .finish()
-                    .unwrap()
-                    .select([
-                        "timestamp",
-                        "candle_date_time_kst",
-                        "high_price",
-                        "low_price",
-                        "opening_price",
-                        "trade_price",
-                    ])
-                    .unwrap()
-                    .sort(["timestamp"], false)
-                    .unwrap();
-                Ok(df)
+                Err(UPBitError::TooManyRequestError) => continue,
+                Err(e) => panic!("{}", e)
             }
-            Err(e) => Err(e)
         }
     }
 
     // bei: BTC와 ETH로 측정한 시장 가격의 저점/고점 상황 (배율: x100) - 낮을수록 구매 강도 상승.
     // delta: 변화량. 음수에서 양수로 변환되는 시점이 구매 강도 상승.
     // rsi: BERSI
-    pub async fn btc_eth_indicator(&self) -> Result<(f64, f64, f64), UPBitError> {
+    // previous = 0 현재, ex) previous = 1: 1x5분전 기준
+    pub async fn btc_eth_indicator(&self, previous: u8) -> Result<(f64, f64, f64), UPBitError> {
         let mut btc_df = match self.get_recent_market_data("KRW-BTC", 200).await {
             Ok(df) => {
                 df.lazy().select([
@@ -153,15 +188,15 @@ impl UPBitSocket {
             .collect().unwrap()
             .drop_nulls::<String>(None).unwrap();
 
-        let bei = match indicator_df.column("bei").unwrap().get(indicator_df.column("bei").unwrap().len()-1).unwrap() {
+        let bei = match indicator_df.column("bei").unwrap().get(indicator_df.column("bei").unwrap().len()-1-(previous as usize)).unwrap() {
             AnyValue::Float64(f) => f,
             _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
-        let delta = match indicator_df.column("delta").unwrap().get(indicator_df.column("delta").unwrap().len()-1).unwrap() {
+        let delta = match indicator_df.column("delta").unwrap().get(indicator_df.column("delta").unwrap().len()-1-(previous as usize)).unwrap() {
             AnyValue::Float64(f) => f,
             _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
-        let bersi = match indicator_df.column("bersi").unwrap().get(indicator_df.column("bersi").unwrap().len()-1).unwrap() {
+        let bersi = match indicator_df.column("bersi").unwrap().get(indicator_df.column("bersi").unwrap().len()-1-(previous as usize)).unwrap() {
             AnyValue::Float64(f) => f,
             _ => return Err(UPBitError::OtherError(String::from("BEI 측정 후 실수 변환에 실패했습니다.")))
         };
