@@ -1,3 +1,4 @@
+use std::ops::Add;
 use polars::prelude::*;
 use polars::series::ops::NullBehavior;
 use polars_io::prelude::*;
@@ -110,6 +111,32 @@ impl UPBitSocket {
                         .sort(["timestamp"], false)
                         .unwrap();
                     return Ok(df);
+                }
+                Err(UPBitError::TooManyRequestError) => continue,
+                Err(e) => panic!("{}", e)
+            }
+        }
+    }
+
+    // 종목의 현재가를 KRW로 얻어오기
+    pub async fn get_price_of(&self, ticker: &str) -> Result<f64, UPBitError> {
+        // 현재 실시간 데이터에 키가 존재하면 거기서 값을 가져옴
+        {
+            let mutex = self.realtime_price.lock().unwrap();
+            if (*mutex).contains_key(ticker) {
+                return Ok((*mutex).get(ticker).unwrap().clone());
+            }
+        }
+
+        // 실시간 데이터에서 찾지 못했으므로, UPBit API에서 새로 받아옴
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+        let url = format!("https://api.upbit.com/v1/ticker?markets={}", ticker);
+        loop {
+            interval.tick().await;
+            match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
+                Ok(json_array) => {
+                    let json = &json_array[0]; // 한 개의 ticker만 조회하니 무조건 0번 인덱스만 존재
+                    return Ok(json["trade_price"].as_f64().unwrap());
                 }
                 Err(UPBitError::TooManyRequestError) => continue,
                 Err(e) => panic!("{}", e)

@@ -1,4 +1,4 @@
-use crate::upbit::{UPBitError, request_post, request_get, generate_request_body, response_to_json, CallMethod};
+use crate::upbit::{UPBitError, request_post, request_get, generate_request_body, response_to_json, CallMethod, UPBitSocket};
 use crate::upbit::coin::Coin;
 
 pub struct UPBitAccount {
@@ -67,15 +67,14 @@ impl UPBitAccount {
                             );
                         }
                     }
-                    return Err(UPBitError::FailedToReceiveDataError(String::from(format!("현재 잔고에 \' {} \' 정보가 존재하지 않습니다.", ticker))));
+                    return Ok(0.0);
                 }
                 Err(UPBitError::TooManyRequestError) => continue,
                 Err(e) => panic!("{}", e)
             }
         }
     }
-// TODO: 보유 자산 현황을 토대로 실제 구매하는 로직 구현하기
-// TODO: 데이터베이스 연동
+
     pub async fn buy_market_order(&self, ticker: &str, price: f64) -> Result<(), UPBitError> {
         let price_str = price.to_string();
         let mut body = std::collections::HashMap::new();
@@ -173,6 +172,67 @@ impl UPBitAccount {
                 }
                 Err(UPBitError::TooManyRequestError) => continue,
                 Err(e) => panic!("{}", e)
+            }
+        }
+    }
+
+    // 구매 예산이 너무 적거나, 이미 많이 보유하고 있으면 구매하지 않음
+    pub async fn buy(&self, public_upbit: &UPBitSocket, ticker: &str) {
+        // 현재 모든 자산을 KRW로 환산해서 저장
+        let mut krw = 0.0;
+        let my_balances = match self.get_all_balances().await {
+            Ok(map) => map,
+            Err(e) => {
+                // 자산이 없는 경우만 존재
+                eprintln!("{}", e);
+                return;
+            }
+        };
+        for (t, b) in my_balances {
+            if ticker == "KRW" {
+                krw += b;
+            } else {
+                krw += public_upbit.get_price_of(&t).await.unwrap();
+            }
+        }
+
+        // 현재 종목 가격
+        let price = public_upbit.get_price_of(ticker).await.unwrap();
+
+        // 한 종목에 구매가 몰리는 것을 방지하기 위한 기준값
+        let limit_percent =  15.0; // %
+
+        // 구매 예산을 전체 자산의 n%로 측정
+        let n_percent = 10.0; // %
+        let budget = krw * n_percent/100.0;
+
+        // 책정 예산이 기준 금액보다 적으면 구매 취소
+        let budget_minimum = 6000.0;
+        if budget < budget_minimum { return; }
+
+        // 현재 종목에 대해 내가 보유한 양
+        let already_bought = price * self.get_balance_of(ticker).await.unwrap();// KRW
+
+        // 이번 구매로 인해 기준값을 넘게 된다면 구매 취소
+        if already_bought + budget > krw*limit_percent/100.0 { return; }
+
+        // 구매
+        self.buy_market_order(ticker, budget).await.unwrap();
+    }
+
+    // 해당 종목을 전체 판매
+    async fn sell(&self, ticker: &str) {
+        self.sell_market_order_by_percent(ticker, 100.0).await.unwrap();
+    }
+
+    // 현재 보유하고 있는 종목을 판매해야 할 지 판단
+    pub async fn sell_decision(&self, public_upbit: &UPBitSocket,) {
+        for (ticker, coin) in &self.my_coins {
+            // RSI가 너무 높으면 판매
+            let rsi_limit = 60.0;
+            let current_rsi = coin.get_rsi(&public_upbit.realtime_price, 0).await.unwrap();
+            if current_rsi > rsi_limit {
+                self.sell(ticker);
             }
         }
     }

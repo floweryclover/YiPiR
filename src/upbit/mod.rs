@@ -77,20 +77,26 @@ impl UPBitService {
             let mut count: u16 = 300;
             let mut interval = time::interval(Duration::from_secs(1));
             let (mut bei, mut delta, mut bersi) = (1.0, 1.0, 50.0);
-                loop {
+            loop {
 
                 if count == 300 {
                     (bei, delta, bersi) = upbit_socket.refresh_recommended_coins().await.unwrap();
                     println!("{} {} {}", bei, delta, bersi);
                     count = 1;
                 }
-                if !upbit_socket.recommended_coins.is_empty() {
-                    for (ticker, coin) in &mut upbit_socket.recommended_coins {
-                        if coin.buy_decision(&upbit_socket.realtime_price).await {
 
+                // 구매 후보에 대해 구매 판단 진행
+                if !upbit_socket.recommended_coins.is_empty() {
+                    for (ticker, coin) in &upbit_socket.recommended_coins {
+                        if coin.buy_decision(&upbit_socket.realtime_price).await {
+                            upbit_floweryclover.buy(&upbit_socket, ticker).await;
                         }
                     }
                 }
+
+                // 계정마다 보유하고 있는 종목에 대해 판매 판단 진행
+                upbit_floweryclover.sell_decision(&upbit_socket).await;
+
                 interval.tick().await;
                 count += 1;
             }

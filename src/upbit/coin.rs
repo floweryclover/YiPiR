@@ -4,7 +4,6 @@ use crate::upbit::{UPBitError, UPBitSocket};
 pub struct Coin {
     ticker: String,
     dataframe: DataFrame,
-    previous_rsi: f64,
 }
 
 pub enum CoinError {
@@ -112,7 +111,6 @@ impl Coin {
         Coin {
             ticker: String::from(ticker),
             dataframe: DataFrame::empty(),
-            previous_rsi: -1.0,
         }
     }
 
@@ -150,7 +148,8 @@ impl Coin {
         &self.dataframe
     }
 
-    pub async fn get_rsi(&self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>) -> Result<f64, CoinError> {
+    // previous 만큼 과거 데이터를 가져옴 (0은 현재)
+    pub async fn get_rsi(&self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>, previous: u8) -> Result<f64, CoinError> {
         use polars::series::ops::NullBehavior;
 
         if self.dataframe.is_empty() {
@@ -200,7 +199,7 @@ impl Coin {
                 .alias("rsi")
         ]).collect().unwrap();
 
-        let rsi = match rsi_df.get_columns()[0].get(rsi_df.get_columns()[0].len()-1).unwrap() {
+        let rsi = match rsi_df.get_columns()[0].get(rsi_df.get_columns()[0].len()-1-(previous as usize)).unwrap() {
             AnyValue::Float64(f) => f,
             _ => -1.0
         };
@@ -208,10 +207,10 @@ impl Coin {
     }
 
     // 구매 판단
-    pub async fn buy_decision(&mut self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>) -> bool {
-        let prev_rsi = self.previous_rsi;
-        let current_rsi = self.get_rsi(realtime_data_arc).await.unwrap();
-        self.previous_rsi = current_rsi;
+    pub async fn buy_decision(&self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>) -> bool {
+        let prev_rsi = self.get_rsi(realtime_data_arc, 1).await.unwrap();
+        let current_rsi = self.get_rsi(realtime_data_arc, 0).await.unwrap();
+
         if prev_rsi < 0.0 || current_rsi < 0.0 {
             return false;
         }
