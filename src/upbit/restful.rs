@@ -17,7 +17,6 @@ impl UPBitAccount {
             my_coins: std::collections::HashMap::new(),
         }
     }
-
     pub async fn get_all_balances(&self) -> Result<std::collections::HashMap<String, f64>, UPBitError> {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
         loop {
@@ -75,7 +74,8 @@ impl UPBitAccount {
             }
         }
     }
-
+// TODO: 보유 자산 현황을 토대로 실제 구매하는 로직 구현하기
+// TODO: 데이터베이스 연동
     pub async fn buy_market_order(&self, ticker: &str, price: f64) -> Result<(), UPBitError> {
         let price_str = price.to_string();
         let mut body = std::collections::HashMap::new();

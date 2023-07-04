@@ -34,14 +34,15 @@ impl UPBitSocket {
     // 5분 이상 텀 두고 반복 호출 권장
     pub async fn refresh_recommended_coins(&mut self) -> Result<(f64, f64, f64), UPBitError> {
         // 이전에 저장된 BEI Delta값이 0.0이면 미설정되었음을 의미하므로 이전값을 넣는다
-        let prev_delta = if (self.previous_bei_delta).abs() < 0.0001 {
+        let (prev_delta, prev_bersi) = if (self.previous_bei_delta).abs() < 0.0001 {
             match self.btc_eth_indicator(1).await {
-                Ok((_, b, _)) => b,
+                Ok((_, b, c)) => (b, c),
                 Err(e) => return Err(e),
             }
         } else {
-            self.previous_bei_delta
+            (self.previous_bei_delta, self.previous_bersi)
         };
+
         let (bei, bei_delta, bersi) = match self.btc_eth_indicator(0).await {
             Ok((a, b, c)) => (a, b, c),
             Err(e) => return Err(e),
@@ -55,7 +56,7 @@ impl UPBitSocket {
 
         } else {
             // 상승장으로의 전환일 때 선택하는 것이 현명할 듯
-            if prev_delta < 0.0 {
+            if prev_delta < 0.0 && bersi < 45.0 {
                 let heavy_tickers = match self.get_tickers_sortby_volume().await {
                     Ok(vec) => vec,
                     Err(e) => return Err(e),
@@ -63,7 +64,11 @@ impl UPBitSocket {
 
                 let mut tickers_map = std::collections::HashMap::new();
                 // 현재 저점인 종목만 추리기
+                let mut count = 1;
                 for ticker in heavy_tickers {
+                    if count > 20 {
+                        break;
+                    }
                    let df = match self.get_recent_market_data(ticker.as_str(), 200).await {
                        Ok(df) => df,
                        Err(_) => panic!("refresh_recommended_coins()에서 Too Many Request Error 이외의 오류가 발생했습니다.")
@@ -86,6 +91,7 @@ impl UPBitSocket {
                     let mut coin = Coin::new(ticker.as_str());
                     coin.init_data(&df);
                     tickers_map.insert(ticker, coin);
+                    count += 1;
                 }
 
                 self.recommended_coins.clear();
@@ -106,7 +112,7 @@ impl Coin {
         Coin {
             ticker: String::from(ticker),
             dataframe: DataFrame::empty(),
-            previous_rsi: 50.0,
+            previous_rsi: -1.0,
         }
     }
 
@@ -144,19 +150,32 @@ impl Coin {
         &self.dataframe
     }
 
-    pub async fn get_rsi(&self) -> Result<f64, CoinError> {
+    pub async fn get_rsi(&self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>) -> Result<f64, CoinError> {
         use polars::series::ops::NullBehavior;
 
         if self.dataframe.is_empty() {
             return Err(CoinError::DataFrameNotInitializedError);
         }
 
-        let diff = self.dataframe.clone().lazy().select([
-            col("timestamp"),
-            col("trade_price").diff(1, NullBehavior::Ignore).alias("diff"),
-        ]).collect().unwrap();
 
-        let au_ad = diff.clone().lazy().select([
+        let arc = realtime_data_arc.clone();
+        let mut prices = self.dataframe.clone().lazy().select([col("trade_price")]).collect().unwrap();
+        let realtime_price = {
+            let mutex = arc.lock().unwrap();
+            if (*mutex).contains_key(self.ticker.as_str()) {
+                (*mutex).get(self.ticker.as_str()).unwrap().clone()
+            } else {
+                0.0
+            }
+        };
+        let realtime_row: DataFrame =  df!("trade_price" => &[realtime_price]).unwrap();
+        prices.extend(&realtime_row).unwrap();
+
+        let au_ad = prices.lazy().select([
+            col("trade_price").diff(1, NullBehavior::Ignore).alias("diff"),
+        ])
+            .collect().unwrap()
+            .lazy().select([
             when(col("diff").lt(lit(0)))
                 .then(lit(0))
                 .otherwise(col("diff"))
@@ -173,20 +192,29 @@ impl Coin {
         let rsi_df = au_ad.lazy().select([
             (lit(100.0) - (lit(100.0) / (lit(1.0)+(col("au")/col("ad")) )))
                 .alias("rsi")
+        ]).collect().unwrap()
+            .lazy().select([
+            when(col("rsi").lt(lit(10)))
+                .then(lit(-1.0))
+                .otherwise(col("rsi"))
+                .alias("rsi")
         ]).collect().unwrap();
 
         let rsi = match rsi_df.get_columns()[0].get(rsi_df.get_columns()[0].len()-1).unwrap() {
             AnyValue::Float64(f) => f,
-            _ => 50.0
+            _ => -1.0
         };
         return Ok(rsi);
     }
 
     // 구매 판단
-    pub async fn buy_decision(&mut self) {
+    pub async fn buy_decision(&mut self, realtime_data_arc: &Arc<std::sync::Mutex<std::collections::HashMap<String, f64>>>) -> bool {
         let prev_rsi = self.previous_rsi;
-        let current_rsi = self.get_rsi().await.unwrap();
+        let current_rsi = self.get_rsi(realtime_data_arc).await.unwrap();
         self.previous_rsi = current_rsi;
+        if prev_rsi < 0.0 || current_rsi < 0.0 {
+            return false;
+        }
 
         // if !self.realtime_price.contains_key(ticker.as_str()) {
         //     continue;
@@ -194,17 +222,33 @@ impl Coin {
         // let realtime_price = self.realtime_price[ticker.as_str()];
 
         let df = self.get_dataframe();
+
         let values = df.clone().lazy().select([
-            (col("trade_price").ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14)) - lit(1.0)*col("trade_price").std(0)).alias("value")
+            col("trade_price").alias("price"),
+            col("trade_price").ewm_mean(EWMOptions::default().and_com(13.0).and_min_periods(14)).alias("mean")
         ]).collect().unwrap();
 
-        let price_cret = match values.get_columns()[0].get(values.get_columns().len()-1).unwrap() {
+        let current_price = match values.column("price").unwrap().get(values.get_columns()[0].len()-1).unwrap() {
+            AnyValue::Float64(f) => f,
+            _ => 0.0,
+        };
+        let mean = match values.column("mean").unwrap().get(values.get_columns()[0].len()-1).unwrap() {
             AnyValue::Float64(f) => f,
             _ => 0.0,
         };
 
-        // if realtime_price < price_cret && current_rsi > 35.0 && prev_rsi < 35.0 {
-        //     println!("구매: {}", ticker.as_str());
-        // }
+        // - 0.5 % 부터 구매해보자
+        let ratio = 100.0*(current_price-mean)/mean;
+        // 준비된 지표들
+        // 현재가
+        // 평균(이동평균)
+        // 현재 RSI
+        // 직전 RSI
+
+        // 사용 지표들
+        // 현재가 - ratio 0.5%로 사용
+        // 평균 = ratio 0.5%로 사용
+        // 현재 RSI > 35 직전 RSI < 35 사용
+        return ratio < -0.5 && current_rsi > 35.0 && prev_rsi < 35.0;
     }
 }

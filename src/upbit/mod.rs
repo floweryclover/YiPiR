@@ -17,6 +17,7 @@ pub struct UPBitSocket {
     reqwest_client: reqwest::Client,
     realtime_price: Arc<Mutex<std::collections::HashMap<String, f64>>>,
     previous_bei_delta: f64,
+    previous_bersi: f64,
 }
 
 pub struct UPBitService {}
@@ -34,7 +35,8 @@ impl UPBitService {
         // 메인 루프
         task::spawn(async move {
             // use polars::prelude::*;
-            // let upbit_floweryclover = upbit::restful::UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
+            use crate::upbit::restful::UPBitAccount;
+            let upbit_floweryclover = UPBitAccount::new("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm", "0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx");
             let mut upbit_socket = UPBitSocket::new();
             // 웹소켓 수신
             let (mut stream, response) = connect("wss://api.upbit.com/websocket/v1").unwrap();
@@ -72,17 +74,21 @@ impl UPBitService {
                 }
             });
 
-            let mut count: u16 = 1;
+            let mut count: u16 = 300;
             let mut interval = time::interval(Duration::from_secs(1));
-            loop {
-                if count == 10 {
-                    let (bei, delta, bersi) = upbit_socket.refresh_recommended_coins().await.unwrap();
+            let (mut bei, mut delta, mut bersi) = (1.0, 1.0, 50.0);
+                loop {
+
+                if count == 300 {
+                    (bei, delta, bersi) = upbit_socket.refresh_recommended_coins().await.unwrap();
                     println!("{} {} {}", bei, delta, bersi);
                     count = 1;
                 }
                 if !upbit_socket.recommended_coins.is_empty() {
                     for (ticker, coin) in &mut upbit_socket.recommended_coins {
-                        coin.buy_decision();
+                        if coin.buy_decision(&upbit_socket.realtime_price).await {
+
+                        }
                     }
                 }
                 interval.tick().await;
@@ -101,6 +107,7 @@ impl UPBitSocket {
             reqwest_client: reqwest::Client::new(),
             realtime_price: Arc::new(Mutex::new(std::collections::HashMap::new())),
             previous_bei_delta: 0.0,
+            previous_bersi: 0.0,
         }
     }
 }
