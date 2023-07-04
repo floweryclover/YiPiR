@@ -252,10 +252,11 @@ impl UPBitAccount {
     // 현재 보유하고 있는 종목을 판매해야 할 지 판단
     pub async fn sell_decision(&self, public_upbit: &UPBitSocket) {
         for (ticker, coin) in &self.coins {
-            // RSI가 너무 높으면 판매
-            let rsi_limit = 60.0;
+            // RSI가 기준치 이상으로 올라갔다가 내려가면 판매
+            let rsi_limit = 65.0;
+            let previous_rsi = coin.get_rsi(&public_upbit.realtime_price, 1).await.unwrap();
             let current_rsi = coin.get_rsi(&public_upbit.realtime_price, 0).await.unwrap();
-            if current_rsi > rsi_limit {
+            if current_rsi < rsi_limit && previous_rsi > rsi_limit {
                 self.sell(ticker).await;
             }
         }
