@@ -209,7 +209,7 @@ impl UPBitAccount {
             }
         };
         for (t, b) in my_balances {
-            if ticker == "KRW" {
+            if t == "KRW" {
                 krw += b;
             } else {
                 krw += public_upbit.get_price_of(&t).await.unwrap();
