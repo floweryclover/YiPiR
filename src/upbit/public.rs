@@ -119,7 +119,10 @@ impl UPBitSocket {
             match request_get(&self.reqwest_client, &url, CallMethod::Public).await {
                 Ok(json_array) => {
                     let json = &json_array[0]; // 한 개의 ticker만 조회하니 무조건 0번 인덱스만 존재
-                    return Ok(json["trade_price"].as_f64().unwrap());
+                    match json["trade_price"].as_f64() {
+                        Some(f) => return Ok(f),
+                        None => panic!("Ticker:{},  {}", ticker, json.to_string()),
+                    }
                 }
                 Err(UPBitError::TooManyRequestError) => continue,
                 Err(e) => panic!("{}", e)
