@@ -124,9 +124,9 @@ impl UPBitSocket {
 
 pub enum UPBitError {
     DuplicatedNonceError,
-    InvalidParameterError,
+    InvalidRequestError,
     FailedToReceiveDataError(String),
-    RequestError,
+    URLError,
     InvalidJsonError,
     OtherError(String),
     FailedToTradeError(String),
@@ -137,9 +137,9 @@ impl std::fmt::Debug for UPBitError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             UPBitError::DuplicatedNonceError => write!(f, "요청에 중복된 UUID가 사용되었습니다."),
-            UPBitError::InvalidParameterError => write!(f, "요청에 잘못된 파라미터가 존재합니다."),
+            UPBitError::InvalidRequestError => write!(f, "잘못된 요청입니다."),
             UPBitError::FailedToReceiveDataError(detail) => write!(f, "데이터를 받아오지 못했습니다: {}", detail),
-            UPBitError::RequestError => write!(f, "요청한 URL로 요청을 보낼 수 없습니다."),
+            UPBitError::URLError => write!(f, "요청한 URL로 요청을 보낼 수 없습니다."),
             UPBitError::InvalidJsonError => write!(f, "응답 데이터를 JSON 형식으로 변환할 수 없습니다."),
             UPBitError::OtherError(detail) => write!(f, "오류가 발생했습니다: {}", detail),
             UPBitError::FailedToTradeError(detail) => write!(f, "거래에 실패했습니다: {}", detail),
@@ -152,9 +152,9 @@ impl std::fmt::Display for UPBitError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             UPBitError::DuplicatedNonceError => write!(f, "요청에 중복된 UUID가 사용되었습니다."),
-            UPBitError::InvalidParameterError => write!(f, "요청에 잘못된 파라미터가 존재합니다."),
+            UPBitError::InvalidRequestError => write!(f, "잘못된 요청입니다."),
             UPBitError::FailedToReceiveDataError(detail) => write!(f, "데이터를 받아오지 못했습니다: {}", detail),
-            UPBitError::RequestError => write!(f, "요청한 URL로 요청을 보낼 수 없습니다."),
+            UPBitError::URLError => write!(f, "요청한 URL로 요청을 보낼 수 없습니다."),
             UPBitError::InvalidJsonError => write!(f, "응답 데이터를 JSON 형식으로 변환할 수 없습니다."),
             UPBitError::OtherError(detail) => write!(f, "오류가 발생했습니다: {}", detail),
             UPBitError::FailedToTradeError(detail) => write!(f, "거래에 실패했습니다: {}", detail),
@@ -194,7 +194,7 @@ async fn request_get(reqwest_client: &reqwest::Client, url: &str, method: CallMe
     return if let Ok(res) = response {
         response_to_json(res).await
     } else {
-        Err(UPBitError::RequestError)
+        Err(UPBitError::InvalidJsonError)
     };
 }
 
@@ -247,7 +247,7 @@ async fn request_post(reqwest_client: &reqwest::Client, url: &str, body: &std::c
     return if let Ok(res) = response {
         response_to_json(res).await
     } else {
-        Err(UPBitError::RequestError)
+        Err(UPBitError::URLError)
     };
 }
 
@@ -259,6 +259,11 @@ async fn response_to_json(response: reqwest::Response) -> Result<Vec<serde_json:
             return Err(UPBitError::TooManyRequestError);
         }
     };
+
+    // to_string() 값이 2 ( {} )면 요청 에러 반환
+    if json.to_string().len() == 2 {
+        return Err(UPBitError::InvalidRequestError);
+    }
 
     // 배열 형태면 그대로 반환, 배열이 아니면 배열로 반환
     return if json.is_array() {
