@@ -54,8 +54,9 @@ impl UPBitSocket {
             }
 
         } else {
-            // 상승장으로의 전환일 때 선택하는 것이 현명할 듯
-            if prev_delta < 0.0 && bersi < 45.0 {
+            // 상승장으로의 전환할때 하면 너무 짧음. 상승장이되 현재가 너무 고가이지만 않으면 될듯
+            //
+            if bei < 0.0 && bersi < 45.0 {
                 let heavy_tickers = match self.get_tickers_sortby_volume().await {
                     Ok(vec) => vec,
                     Err(e) => return Err(e),
