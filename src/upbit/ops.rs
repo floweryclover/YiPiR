@@ -1,4 +1,4 @@
-use std::ops::BitAnd;
+use std::ops::{BitAnd, BitOr};
 use polars::series::ops::NullBehavior;
 use polars::prelude::*;
 use crate::upbit::{CandleData, CandleDataOperation};
@@ -252,4 +252,29 @@ pub fn check_rsi_divergence(candle_data: &[CandleData], divergence_check_mode: &
     }
 
     false
+}
+/// # RSI 꺾임 확인
+/// 다음 값이 감소하며 rsi_bound를 넘는 RSI 지점을 검색합니다.
+/// 즉 이전 RSI 수치가 rsi_bound보다 크고 다음 데이터 때 감소한 경우 true를 반환합니다.
+/// 가장 최근 데이터는 확인하지 않고 직전 데이터까지만 판단합니다.
+/// count 이내 데이터에 대해 확인하며, 3 이상 입력 데이터 크기 이하여야 합니다.
+pub fn check_rsi_breaking_peak(candle_data: &[CandleData], count: &usize, rsi_bound: &f64) -> bool {
+    if count > &candle_data.len() || count < &3 {
+        panic!("bound값은 3 이상이며 입력 데이터의 크기까지만 허용됩니다.");
+    }
+
+    let full_rsi_series = get_rsi_series(candle_data);
+
+    // .all()를 사용하기 위해 드모르간 법칙 이용
+    // 조건에 맞는 값이 없는 경우 true true true true -> true -> NOT 연산으로 -> false
+    // 존재하는 경우 true true false true -> false -> NOT 연산으로 -> true를 반환해야 합니다.
+    !full_rsi_series
+        .diff(-1, NullBehavior::Ignore).unwrap()
+        .lt_eq(0.0).unwrap()
+        .bitor(
+            full_rsi_series
+                .lt_eq(*rsi_bound as f32).unwrap()
+        )
+        .slice((candle_data.len()-count) as i64, count-1)
+        .all()
 }

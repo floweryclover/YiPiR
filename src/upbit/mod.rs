@@ -24,9 +24,9 @@ pub async fn spawn_yipir_upbit_service() -> tokio::task::JoinHandle<()> {
 
     task::spawn(async move {
         let mut interval = time::interval(Duration::from_secs(1));
-        let upbit_account_floweryclover = UpbitAccount::new(
-            String::from("qynTp0pDQGLkYl4VmoZax9ftGjQNe5YwLpJ7X4fm"),
-            String::from("0ikxDGSb4XkwndGIYhd1yNzE0jUji1lQHqEPxWfx"));
+        let upbit_account = UpbitAccount::new(
+            String::from(" UPBit Access Key"),
+            String::from(" UPBit Secret Key "));
 
          loop {
              interval.tick().await;
@@ -36,7 +36,7 @@ pub async fn spawn_yipir_upbit_service() -> tokio::task::JoinHandle<()> {
                  candle_datas.push(guaranteed_get_candle_data(ticker.as_str(), CandleUnit::Min1, 200).await);
              }
 
-             // 구매 점수 높은 종목을 찾아 구매 시행
+             //구매 점수 높은 종목을 찾아 구매 시행
              candle_datas
                  .iter()
                  .for_each(
@@ -45,7 +45,7 @@ pub async fn spawn_yipir_upbit_service() -> tokio::task::JoinHandle<()> {
                              && data.get_last_price() < data.get_ewm_mean() // 현재 가격이 평균보다 낮음
                          {
                              let ticker = data[0].market.clone();
-                             let cloned_account = upbit_account_floweryclover.clone();
+                             let cloned_account = upbit_account.clone();
                              task::spawn(async move {
                                  if let Some(krw) = get_balance_of(&cloned_account, "KRW").await {
                                      if let None = get_balance_of(&cloned_account, &ticker).await {
@@ -63,11 +63,11 @@ pub async fn spawn_yipir_upbit_service() -> tokio::task::JoinHandle<()> {
                  .for_each(
                      |data| {
                          if data.check_rsi_divergence(&RsiDivergenceCheckMode::Peak, &70.0, &5) // 5개 데이터 이내 RSI 다이버전스 발생
-                             || data.get_last_price() > data.get_ewm_mean() + data.get_std()*1.5 // 표준편차의 1.5배보다 더 벌었음
-                             || data.get_rsi() > 45.0 && data.get_last_price() < data.get_ewm_mean() // RSI가 올랐는데도 가격이 오르지 않았으면 가망이 없는 종목이라 판단
+                             || data.check_rsi_breaking_peak(&4, &70.0) // RSI 꺾임 발생
+                             || data.get_rsi() > 60.0 && data.get_last_price() < data.get_ewm_mean() // RSI가 올랐는데도 가격이 오르지 않았으면 가망이 없는 종목이라 판단
                          {
                              let ticker = data[0].market.clone();
-                             let cloned_account = upbit_account_floweryclover.clone();
+                             let cloned_account = upbit_account.clone();
 
                              task::spawn(async move {
                                  if let Some(_) = get_balance_of(&cloned_account, &ticker).await {

@@ -38,6 +38,7 @@ pub trait CandleDataOperation {
     fn get_std(&self) -> f64;
     fn get_last_price(&self) -> f64;
     fn check_rsi_divergence(&self, divergence_check_mode: &RsiDivergenceCheckMode, rsi_bound: &f64, recent_data_bound: &usize) -> bool;
+    fn check_rsi_breaking_peak(&self, count: &usize, rsi_bound: &f64) -> bool;
 }
 
 impl CandleDataOperation for Vec<CandleData> {
@@ -60,6 +61,8 @@ impl CandleDataOperation for Vec<CandleData> {
     }
 
     fn check_rsi_divergence(&self, divergence_check_mode: &RsiDivergenceCheckMode, rsi_bound: &f64, recent_data_bound: &usize) -> bool { self.as_slice().check_rsi_divergence(divergence_check_mode, rsi_bound, recent_data_bound) }
+
+    fn check_rsi_breaking_peak(&self, count: &usize, rsi_bound: &f64) -> bool { self.as_slice().check_rsi_breaking_peak(count, rsi_bound) }
 }
 
 impl CandleDataOperation for &[CandleData] {
@@ -101,6 +104,10 @@ impl CandleDataOperation for &[CandleData] {
 
     fn check_rsi_divergence(&self, divergence_check_mode: &RsiDivergenceCheckMode, rsi_bound: &f64, recent_data_bound: &usize) -> bool {
         check_rsi_divergence(self, divergence_check_mode, rsi_bound, recent_data_bound)
+    }
+
+    fn check_rsi_breaking_peak(&self, count: &usize, rsi_bound: &f64) -> bool {
+        check_rsi_breaking_peak(&self, count, rsi_bound)
     }
 }
 
